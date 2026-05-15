@@ -16,11 +16,12 @@ const callback = async (req, res) => {
     req.session.instanceUrl = conn.instanceUrl;
     req.session.userId = userInfo.id;
 
-    res.redirect('http://localhost:3000/dashboard');
-
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    res.redirect(`${frontendUrl}/dashboard`);
   } catch (err) {
     console.error('OAuth callback error:', err);
-    res.redirect('http://localhost:3000/?error=auth_failed');
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    res.redirect(`${frontendUrl}/?error=auth_failed`);
   }
 };
 

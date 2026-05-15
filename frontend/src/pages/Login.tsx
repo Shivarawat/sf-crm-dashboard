@@ -1,6 +1,7 @@
 const Login = () => {
   const handleLogin = () => {
-    window.location.href = 'http://localhost:5001/auth/login';
+    const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5001';
+    window.location.href = `${apiUrl}/auth/login`;
   };
 
   return (
