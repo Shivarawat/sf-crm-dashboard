@@ -1,6 +1,6 @@
 const Login = () => {
   const handleLogin = () => {
-    const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5001';
+    const apiUrl = process.env.REACT_APP_API_URL || 'https://sf-crm-dashboard.onrender.com';
     window.location.href = `${apiUrl}/auth/login`;
   };
 
