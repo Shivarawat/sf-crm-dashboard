@@ -1,7 +1,10 @@
+// Login page — shown when the user is not authenticated.
+// Clicking the button redirects the browser to the backend /auth/login route,
+// which then redirects to Salesforce's login page. React is not involved after that click.
 const Login = () => {
   const handleLogin = () => {
     const apiUrl = process.env.REACT_APP_API_URL || 'https://sf-crm-dashboard.onrender.com';
-    window.location.href = `${apiUrl}/auth/login`;
+    window.location.href = `${apiUrl}/auth/login`; // full page redirect — not an API call
   };
 
   return (
