@@ -12,12 +12,15 @@ interface AuthContextType {
   logout: () => void;
 }
 
+// Global auth state — any component can call useAuth() to get current user without prop drilling
 const AuthContext = createContext<AuthContextType>({ user: null, loading: true, logout: () => {} });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // On app load, call /auth/me to check if the session is still valid.
+  // If backend returns user data → logged in. If 401 → not logged in, show Login page.
   useEffect(() => {
     api.get('/auth/me')
       .then((res) => setUser(res.data))
@@ -25,6 +28,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       .finally(() => setLoading(false));
   }, []);
 
+  // Calls /auth/logout on backend to destroy the session, then clears local user state
   const logout = async () => {
     await api.get('/auth/logout');
     setUser(null);
@@ -37,4 +41,5 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
+// Custom hook — components import useAuth() instead of useContext(AuthContext) directly
 export const useAuth = () => useContext(AuthContext);

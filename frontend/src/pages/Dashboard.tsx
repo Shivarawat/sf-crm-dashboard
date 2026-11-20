@@ -51,6 +51,7 @@ const STAGE_COLORS: Record<string, string> = {
   'Closed Lost': '#ef4444',
 };
 
+// Dashboard — main page after login. Fetches all CRM data and renders tabs for overview, accounts, contacts, opportunities.
 const Dashboard = () => {
   const { logout } = useAuth();
   const [tab, setTab] = useState<Tab>('overview');
@@ -63,6 +64,8 @@ const Dashboard = () => {
   const [showCreateContact, setShowCreateContact] = useState(false);
   const [search, setSearch] = useState('');
 
+  // Fires 4 backend API calls in parallel using Promise.all — faster than sequential awaits.
+  // All 4 requests go out at the same time; we wait for all to resolve before updating state.
   const fetchAll = async () => {
     setLoading(true);
     setError('');
@@ -84,8 +87,10 @@ const Dashboard = () => {
     }
   };
 
+  // Fetch all data once when the component first mounts
   useEffect(() => { fetchAll(); }, []);
 
+  // Groups opportunities by stage for the bar chart — reduces array into {stage, count, value} objects
   const chartData = opportunities.reduce((acc: any[], opp) => {
     const existing = acc.find((d) => d.stage === opp.StageName);
     if (existing) { existing.count += 1; existing.value += opp.Amount || 0; }
@@ -93,6 +98,7 @@ const Dashboard = () => {
     return acc;
   }, []);
 
+  // Client-side search filtering — runs on already-fetched data, no extra API calls
   const filteredAccounts = accounts.filter((a) =>
     a.Name?.toLowerCase().includes(search.toLowerCase()) ||
     a.Industry?.toLowerCase().includes(search.toLowerCase())
