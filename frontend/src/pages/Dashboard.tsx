@@ -4,7 +4,7 @@ import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import StatCard from '../components/StatCard';
 import CreateContactModal from '../components/CreateContactModal';
-import { exportToCSV } from '../utils/csvExport';
+import PagedTable, { Column } from '../components/PagedTable';
 
 interface Stats {
   totalAccounts: number;
@@ -12,6 +12,7 @@ interface Stats {
   totalOpportunities: number;
   closedWonCount: number;
   closedWonRevenue: number;
+  stageBreakdown: { stage: string; count: number; value: number }[];
 }
 
 interface Opportunity {
@@ -51,35 +52,53 @@ const STAGE_COLORS: Record<string, string> = {
   'Closed Lost': '#ef4444',
 };
 
-// Dashboard — main page after login. Fetches all CRM data and renders tabs for overview, accounts, contacts, opportunities.
+const money = (n?: number) => (n ? `$${n.toLocaleString()}` : '—');
+
+const accountColumns: Column<Account>[] = [
+  { header: 'Name', render: (a) => a.Name, sortField: 'Name' },
+  { header: 'Industry', render: (a) => a.Industry || '—', sortField: 'Industry' },
+  { header: 'Annual Revenue', render: (a) => money(a.AnnualRevenue), sortField: 'AnnualRevenue' },
+  { header: 'Phone', render: (a) => a.Phone || '—' },
+];
+
+const contactColumns: Column<Contact>[] = [
+  { header: 'Name', render: (c) => `${c.FirstName || ''} ${c.LastName}`.trim(), sortField: 'LastName' },
+  { header: 'Account', render: (c) => c.Account?.Name || '—' },
+  { header: 'Email', render: (c) => c.Email || '—', sortField: 'Email' },
+  { header: 'Phone', render: (c) => c.Phone || '—' },
+];
+
+const opportunityColumns: Column<Opportunity>[] = [
+  { header: 'Name', render: (o) => o.Name, sortField: 'Name' },
+  { header: 'Account', render: (o) => o.Account?.Name || '—' },
+  {
+    header: 'Stage',
+    sortField: 'StageName',
+    render: (o) => (
+      <span style={{ ...styles.badge, backgroundColor: STAGE_COLORS[o.StageName] || '#94a3b8' }}>{o.StageName}</span>
+    ),
+  },
+  { header: 'Amount', render: (o) => money(o.Amount), sortField: 'Amount' },
+  { header: 'Close Date', render: (o) => o.CloseDate, sortField: 'CloseDate' },
+];
+
+// Dashboard — main page after login. The overview uses /api/stats; each other tab is a
+// PagedTable that fetches one page at a time with server-side search, sorting and pagination.
 const Dashboard = () => {
   const { logout } = useAuth();
   const [tab, setTab] = useState<Tab>('overview');
   const [stats, setStats] = useState<Stats | null>(null);
-  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCreateContact, setShowCreateContact] = useState(false);
-  const [search, setSearch] = useState('');
+  const [reloadContacts, setReloadContacts] = useState<() => void>(() => () => {});
 
-  // Fires 4 backend API calls in parallel using Promise.all — faster than sequential awaits.
-  // All 4 requests go out at the same time; we wait for all to resolve before updating state.
-  const fetchAll = async () => {
+  const fetchStats = async () => {
     setLoading(true);
     setError('');
     try {
-      const [statsRes, oppsRes, accsRes, contactsRes] = await Promise.all([
-        api.get('/api/stats'),
-        api.get('/api/opportunities'),
-        api.get('/api/accounts'),
-        api.get('/api/contacts'),
-      ]);
-      setStats(statsRes.data);
-      setOpportunities(oppsRes.data);
-      setAccounts(accsRes.data);
-      setContacts(contactsRes.data);
+      const res = await api.get('/api/stats');
+      setStats(res.data);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load data. Please refresh or log in again.');
     } finally {
@@ -87,32 +106,8 @@ const Dashboard = () => {
     }
   };
 
-  // Fetch all data once when the component first mounts
-  useEffect(() => { fetchAll(); }, []);
-
-  // Groups opportunities by stage for the bar chart — reduces array into {stage, count, value} objects
-  const chartData = opportunities.reduce((acc: any[], opp) => {
-    const existing = acc.find((d) => d.stage === opp.StageName);
-    if (existing) { existing.count += 1; existing.value += opp.Amount || 0; }
-    else acc.push({ stage: opp.StageName, count: 1, value: opp.Amount || 0 });
-    return acc;
-  }, []);
-
-  // Client-side search filtering — runs on already-fetched data, no extra API calls
-  const filteredAccounts = accounts.filter((a) =>
-    a.Name?.toLowerCase().includes(search.toLowerCase()) ||
-    a.Industry?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const filteredContacts = contacts.filter((c) =>
-    `${c.FirstName} ${c.LastName}`.toLowerCase().includes(search.toLowerCase()) ||
-    c.Email?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const filteredOpportunities = opportunities.filter((o) =>
-    o.Name?.toLowerCase().includes(search.toLowerCase()) ||
-    o.StageName?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Fetch the overview stats once when the component first mounts
+  useEffect(() => { fetchStats(); }, []);
 
   if (loading) return <div style={styles.loading}>Loading your CRM data...</div>;
 
@@ -120,7 +115,7 @@ const Dashboard = () => {
     <div style={styles.loading}>
       <div style={styles.errorBox}>
         <p style={{ color: '#ef4444', marginBottom: '16px' }}>{error}</p>
-        <button style={styles.retryBtn} onClick={fetchAll}>Retry</button>
+        <button style={styles.retryBtn} onClick={fetchStats}>Retry</button>
       </div>
     </div>
   );
@@ -129,9 +124,8 @@ const Dashboard = () => {
     <div style={styles.page}>
       {showCreateContact && (
         <CreateContactModal
-          accounts={accounts}
           onClose={() => setShowCreateContact(false)}
-          onCreated={fetchAll}
+          onCreated={() => { reloadContacts(); fetchStats(); }}
         />
       )}
 
@@ -145,7 +139,7 @@ const Dashboard = () => {
           <button
             key={t}
             style={{ ...styles.navBtn, ...(tab === t ? styles.navBtnActive : {}) }}
-            onClick={() => { setTab(t); setSearch(''); }}
+            onClick={() => setTab(t)}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
@@ -163,11 +157,11 @@ const Dashboard = () => {
               <StatCard title="Closed Won Revenue" value={`$${stats.closedWonRevenue.toLocaleString()}`} color="#ef4444" />
             </div>
             <div style={styles.chartCard}>
-              <h2 style={styles.sectionTitle}>Opportunities by Stage</h2>
+              <h2 style={styles.sectionTitle}>Opportunities by Stage (all {stats.totalOpportunities.toLocaleString()})</h2>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={chartData}>
+                <BarChart data={stats.stageBreakdown}>
                   <XAxis dataKey="stage" tick={{ fontSize: 12 }} />
-                  <YAxis />
+                  <YAxis allowDecimals={false} />
                   <Tooltip />
                   <Bar dataKey="count" fill="#0070d2" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -177,96 +171,29 @@ const Dashboard = () => {
         )}
 
         {tab === 'accounts' && (
-          <div style={styles.tableCard}>
-            <div style={styles.tableHeader}>
-              <h2 style={styles.sectionTitle}>Accounts</h2>
-              <div style={styles.tableActions}>
-                <input style={styles.search} placeholder="Search accounts..." value={search} onChange={(e) => setSearch(e.target.value)} />
-                <button style={styles.exportBtn} onClick={() => exportToCSV(filteredAccounts, 'accounts')}>Export CSV</button>
-              </div>
-            </div>
-            <table style={styles.table}>
-              <thead>
-                <tr>{['Name', 'Industry', 'Annual Revenue', 'Phone'].map((h) => <th key={h} style={styles.th}>{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {filteredAccounts.length === 0
-                  ? <tr><td colSpan={4} style={styles.empty}>No accounts found</td></tr>
-                  : filteredAccounts.map((acc) => (
-                    <tr key={acc.Id} style={styles.tr}>
-                      <td style={styles.td}>{acc.Name}</td>
-                      <td style={styles.td}>{acc.Industry || '—'}</td>
-                      <td style={styles.td}>{acc.AnnualRevenue ? `$${acc.AnnualRevenue.toLocaleString()}` : '—'}</td>
-                      <td style={styles.td}>{acc.Phone || '—'}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          <PagedTable<Account>
+            title="Accounts" endpoint="/api/accounts" columns={accountColumns}
+            initialSort={{ field: 'Name', dir: 'ASC' }} searchPlaceholder="Search name or industry..." exportName="accounts"
+          />
         )}
 
         {tab === 'contacts' && (
-          <div style={styles.tableCard}>
-            <div style={styles.tableHeader}>
-              <h2 style={styles.sectionTitle}>Contacts</h2>
-              <div style={styles.tableActions}>
-                <input style={styles.search} placeholder="Search contacts..." value={search} onChange={(e) => setSearch(e.target.value)} />
-                <button style={styles.createBtn} onClick={() => setShowCreateContact(true)}>+ New Contact</button>
-                <button style={styles.exportBtn} onClick={() => exportToCSV(filteredContacts, 'contacts')}>Export CSV</button>
-              </div>
-            </div>
-            <table style={styles.table}>
-              <thead>
-                <tr>{['Name', 'Account', 'Email', 'Phone'].map((h) => <th key={h} style={styles.th}>{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {filteredContacts.length === 0
-                  ? <tr><td colSpan={4} style={styles.empty}>No contacts found</td></tr>
-                  : filteredContacts.map((c) => (
-                    <tr key={c.Id} style={styles.tr}>
-                      <td style={styles.td}>{`${c.FirstName || ''} ${c.LastName}`.trim()}</td>
-                      <td style={styles.td}>{c.Account?.Name || '—'}</td>
-                      <td style={styles.td}>{c.Email || '—'}</td>
-                      <td style={styles.td}>{c.Phone || '—'}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          <PagedTable<Contact>
+            title="Contacts" endpoint="/api/contacts" columns={contactColumns}
+            initialSort={{ field: 'LastName', dir: 'ASC' }} searchPlaceholder="Search name or email..." exportName="contacts"
+            actions={(reload) => (
+              <button style={styles.createBtn} onClick={() => { setReloadContacts(() => reload); setShowCreateContact(true); }}>
+                + New Contact
+              </button>
+            )}
+          />
         )}
 
         {tab === 'opportunities' && (
-          <div style={styles.tableCard}>
-            <div style={styles.tableHeader}>
-              <h2 style={styles.sectionTitle}>Opportunities</h2>
-              <div style={styles.tableActions}>
-                <input style={styles.search} placeholder="Search opportunities..." value={search} onChange={(e) => setSearch(e.target.value)} />
-                <button style={styles.exportBtn} onClick={() => exportToCSV(filteredOpportunities, 'opportunities')}>Export CSV</button>
-              </div>
-            </div>
-            <table style={styles.table}>
-              <thead>
-                <tr>{['Name', 'Account', 'Stage', 'Amount', 'Close Date'].map((h) => <th key={h} style={styles.th}>{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {filteredOpportunities.length === 0
-                  ? <tr><td colSpan={5} style={styles.empty}>No opportunities found</td></tr>
-                  : filteredOpportunities.map((opp) => (
-                    <tr key={opp.Id} style={styles.tr}>
-                      <td style={styles.td}>{opp.Name}</td>
-                      <td style={styles.td}>{opp.Account?.Name || '—'}</td>
-                      <td style={styles.td}>
-                        <span style={{ ...styles.badge, backgroundColor: STAGE_COLORS[opp.StageName] || '#94a3b8' }}>
-                          {opp.StageName}
-                        </span>
-                      </td>
-                      <td style={styles.td}>{opp.Amount ? `$${opp.Amount.toLocaleString()}` : '—'}</td>
-                      <td style={styles.td}>{opp.CloseDate}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          <PagedTable<Opportunity>
+            title="Opportunities" endpoint="/api/opportunities" columns={opportunityColumns}
+            initialSort={{ field: 'CloseDate', dir: 'DESC' }} searchPlaceholder="Search name or stage..." exportName="opportunities"
+          />
         )}
       </main>
     </div>
@@ -287,19 +214,9 @@ const styles: Record<string, React.CSSProperties> = {
   main: { padding: '32px' },
   statsGrid: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' },
   chartCard: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.07)' },
-  tableCard: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', boxShadow: '0 2px 12px rgba(0,0,0,0.07)' },
-  tableHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' },
-  tableActions: { display: 'flex', gap: '10px', alignItems: 'center' },
   sectionTitle: { fontSize: '18px', fontWeight: 600, color: '#1a1a2e', margin: 0 },
-  search: { padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '14px', width: '220px' },
-  exportBtn: { padding: '8px 16px', borderRadius: '6px', border: '1px solid #e2e8f0', backgroundColor: '#fff', cursor: 'pointer', fontSize: '13px', fontWeight: 500 },
   createBtn: { padding: '8px 16px', borderRadius: '6px', border: 'none', backgroundColor: '#0070d2', color: '#fff', cursor: 'pointer', fontSize: '13px', fontWeight: 600 },
-  table: { width: '100%', borderCollapse: 'collapse' },
-  th: { textAlign: 'left', padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', borderBottom: '2px solid #e2e8f0' },
-  tr: { borderBottom: '1px solid #f1f5f9' },
-  td: { padding: '14px 16px', fontSize: '14px', color: '#374151' },
   badge: { padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600, color: '#fff' },
-  empty: { padding: '32px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' },
 };
 
 export default Dashboard;

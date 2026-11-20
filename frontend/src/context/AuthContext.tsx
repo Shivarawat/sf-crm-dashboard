@@ -21,6 +21,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   // On app load, call /auth/me to check if the session is still valid.
   // If backend returns user data → logged in. If 401 → not logged in, show Login page.
+  // If any API call comes back 401 (session expired), drop the user so the Login page shows
+  useEffect(() => {
+    const id = api.interceptors.response.use(undefined, (err) => {
+      if (err.response?.status === 401) setUser(null);
+      return Promise.reject(err);
+    });
+    return () => api.interceptors.response.eject(id);
+  }, []);
+
   useEffect(() => {
     api.get('/auth/me')
       .then((res) => setUser(res.data))

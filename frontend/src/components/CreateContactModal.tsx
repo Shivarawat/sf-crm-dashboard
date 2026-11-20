@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../utils/api';
 
 interface Account {
@@ -7,27 +7,39 @@ interface Account {
 }
 
 interface Props {
-  accounts: Account[];
   onClose: () => void;
   onCreated: () => void;
 }
 
-const CreateContactModal = ({ accounts, onClose, onCreated }: Props) => {
+// The dashboard no longer loads every account up front, so the modal fetches the
+// account list for its dropdown itself (alphabetical, up to the API's 200-row page).
+const CreateContactModal = ({ onClose, onCreated }: Props) => {
   const [form, setForm] = useState({ FirstName: '', LastName: '', Email: '', Phone: '', AccountId: '' });
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    api.get('/api/accounts', { params: { limit: 200, sort: 'Name', dir: 'ASC' } })
+      .then((res) => setAccounts(res.data.records))
+      .catch(() => setAccounts([]));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.LastName.trim()) { setError('Last name is required'); return; }
     setLoading(true);
     setError('');
+    setFieldErrors({});
     try {
       await api.post('/api/contacts', form);
       onCreated();
       onClose();
     } catch (err: any) {
+      // The backend returns { error, fieldErrors } for validation problems; show each under its field
       setError(err.response?.data?.error || 'Failed to create contact');
+      setFieldErrors(err.response?.data?.fieldErrors || {});
     } finally {
       setLoading(false);
     }
@@ -53,7 +65,9 @@ const CreateContactModal = ({ accounts, onClose, onCreated }: Props) => {
                 value={form[key as keyof typeof form]}
                 onChange={(e) => setForm({ ...form, [key]: e.target.value })}
                 placeholder={label}
+                aria-label={label}
               />
+              {fieldErrors[key] && <p style={styles.fieldError}>{fieldErrors[key]}</p>}
             </div>
           ))}
 
@@ -92,6 +106,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { display: 'block', fontSize: '13px', fontWeight: 600, color: '#64748b', marginBottom: '6px' },
   input: { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '14px', boxSizing: 'border-box' },
   error: { color: '#ef4444', fontSize: '13px', marginBottom: '12px' },
+  fieldError: { color: '#ef4444', fontSize: '12px', margin: '4px 0 0' },
   actions: { display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' },
   cancelBtn: { padding: '10px 20px', borderRadius: '6px', border: '1px solid #e2e8f0', backgroundColor: '#fff', cursor: 'pointer', fontSize: '14px' },
   submitBtn: { padding: '10px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#0070d2', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: 600 },
